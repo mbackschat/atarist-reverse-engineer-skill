@@ -1,0 +1,2 @@
+# Prevent any line ending or encoding conversions for reference files
+reference/** binary
