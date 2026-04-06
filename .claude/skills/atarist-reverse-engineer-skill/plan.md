@@ -30,6 +30,11 @@ uv add capstone
 uv run python disasm_atari.py ../TARGET_BINARY --prefix TOOLNAME
 ```
 
+The disassembler uses a **two-pass approach** internally:
+1. First pass scans all bytes for code references (RTS, BSR, branches, TRAPs) with no data region filtering
+2. `identify_data_regions()` uses those code references to mark non-code areas
+3. Second pass re-scans with data regions active to remove false positives
+
 This produces:
 - Console output with statistics (TRAP count, string count, subroutine count)
 - `analysis.json` with structured data

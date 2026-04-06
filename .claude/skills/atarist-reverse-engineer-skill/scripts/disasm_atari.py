@@ -440,7 +440,7 @@ class BytePatternAnalyzer:
 
         # First pass: scan for code references (must run scan_all first or tolerate empty sets)
         code_addrs = (self.bsr_targets | self.jsr_targets |
-                      self.branch_targets | set(self.rts_locations))
+                      self.branch_targets | self.bra_targets | set(self.rts_locations))
 
         # Heuristic: find long stretches (>= WINDOW bytes) with no code references
         WINDOW = 64
@@ -484,9 +484,12 @@ class BytePatternAnalyzer:
             if in_existing:
                 continue
 
-            printable = sum(1 for b in code[i:i+STR_WINDOW]
+            chunk = code[i:i+STR_WINDOW]
+            printable = sum(1 for b in chunk
                            if 0x20 <= b <= 0x7E or b in (0x0A, 0x0D, 0x09, 0x00))
-            if printable >= STR_WINDOW * 0.80:
+            # Require actual visible ASCII (not just nulls/control chars) to be at least 40%
+            visible = sum(1 for b in chunk if 0x20 <= b <= 0x7E)
+            if printable >= STR_WINDOW * 0.80 and visible >= STR_WINDOW * 0.40:
                 region_start = i
                 j = i + STR_WINDOW
                 while j < end:
@@ -511,6 +514,38 @@ class BytePatternAnalyzer:
                 else:
                     merged.append((rs, re))
             regions = merged
+
+        # Post-filter: remove data regions that contain code references
+        # (indicates interleaved code+strings, not pure data)
+        if regions:
+            filtered = []
+            for rs, re in regions:
+                refs_inside = sum(1 for a in code_addrs if rs <= a < re)
+                if refs_inside > 0:
+                    continue  # Code refs inside — not pure data
+
+                # Check if region is reached by fall-through from code above.
+                # If the word before the region is NOT a terminator (RTS, RTE,
+                # unconditional BRA, JMP), then code flows into this region.
+                if rs >= 2:
+                    prev_word = struct.unpack('>H', code[rs-2:rs])[0]
+                    # RTS=$4E75, RTE=$4E73, JMP abs.L=$4EF9
+                    terminators = {0x4E75, 0x4E73, 0x4EF9}
+                    # BRA.B = $60xx (xx != 00, xx != FF)
+                    is_bra_b = ((prev_word & 0xFF00) == 0x6000 and
+                                (prev_word & 0xFF) not in (0x00, 0xFF))
+                    if rs >= 4:
+                        prev_long = struct.unpack('>HH', code[rs-4:rs])
+                        # BRA.W = $6000 xxxx
+                        is_bra_w = (prev_long[0] == 0x6000)
+                    else:
+                        is_bra_w = False
+
+                    if prev_word not in terminators and not is_bra_b and not is_bra_w:
+                        continue  # Fall-through code, not data
+
+                filtered.append((rs, re))
+            regions = filtered
 
         self.data_regions = regions
         return regions
@@ -693,8 +728,13 @@ class BytePatternAnalyzer:
                 name, desc = f"{prefix}_0x{func_num:02X}", "Unknown function"
             self.trap_calls.append((offset, trap_num, func_num, name, desc))
         else:
-            # Could be a false positive in data or unusual calling pattern
-            pass
+            # Function number not found locally — this TRAP may be inside a
+            # wrapper subroutine where callers push the function code before BSR.
+            # Record it with func=-1 so detect_indirect_syscalls can find wrappers.
+            prefix = {1: "GEMDOS", 13: "BIOS", 14: "XBIOS"}.get(trap_num)
+            if prefix:
+                self.trap_calls.append((offset, trap_num, -1,
+                                        f"{prefix}_wrapper", "Wrapper TRAP (callers push func)"))
 
     def _identify_gem_trap(self, offset):
         """Identify GEM AES/VDI call from TRAP #2.
@@ -1389,11 +1429,34 @@ def main():
     # Phase 1: Byte-pattern analysis
     analyzer = BytePatternAnalyzer(binary)
 
-    print("\n[1] Identifying data regions...")
+    # First pass: scan WITHOUT data regions so we discover code references
+    print("\n[1] Scanning byte patterns (first pass)...")
+    analyzer.scan_all()
+
+    # Now identify data regions using the discovered code references
+    print("[2] Identifying data regions...")
     analyzer.identify_data_regions()
     print(f"    {len(analyzer.data_regions)} data regions marked")
 
-    print("[2] Extracting strings...")
+    # Second pass: re-scan with data regions excluded to remove false positives
+    analyzer.rts_locations.clear()
+    analyzer.bsr_targets.clear()
+    analyzer.jsr_targets.clear()
+    analyzer.branch_targets.clear()
+    analyzer.bra_targets.clear()
+    analyzer.trap_calls.clear()
+    analyzer.linea_calls.clear()
+    analyzer.lea_pc_refs.clear()
+    analyzer.scan_all()
+    print(f"    {len(analyzer.rts_locations)} RTS/RTE instructions")
+    print(f"    {len(analyzer.bsr_targets)} BSR targets")
+    print(f"    {len(analyzer.jsr_targets)} JSR targets")
+    print(f"    {len(analyzer.branch_targets)} branch targets")
+    print(f"    {len(analyzer.trap_calls)} TRAP system calls")
+    print(f"    {len(analyzer.linea_calls)} Line-A calls")
+    print(f"    {len(analyzer.lea_pc_refs)} LEA PC-relative references")
+
+    print("[3] Extracting strings...")
     analyzer.extract_strings()
     print(f"    {len(analyzer.strings)} strings found")
 
@@ -1407,25 +1470,15 @@ def main():
                 print(f"  ${offset:05X}: \"{safe}\"")
         return
 
-    print("[3] Scanning byte patterns...")
-    analyzer.scan_all()
-    print(f"    {len(analyzer.rts_locations)} RTS/RTE instructions")
-    print(f"    {len(analyzer.bsr_targets)} BSR targets")
-    print(f"    {len(analyzer.jsr_targets)} JSR targets")
-    print(f"    {len(analyzer.branch_targets)} branch targets")
-    print(f"    {len(analyzer.trap_calls)} TRAP system calls")
-    print(f"    {len(analyzer.linea_calls)} Line-A calls")
-    print(f"    {len(analyzer.lea_pc_refs)} LEA PC-relative references")
-
     print("[3b] Detecting indirect system calls through wrappers...")
     analyzer.detect_indirect_syscalls()
     print(f"    {len(analyzer.indirect_syscalls)} indirect system calls found")
 
     # Print system call summary
     print("\n--- System Call Summary ---")
-    gemdos = [(o,n,f,nm,d) for o,n,f,nm,d in analyzer.trap_calls if n == 1]
-    bios = [(o,n,f,nm,d) for o,n,f,nm,d in analyzer.trap_calls if n == 13]
-    xbios = [(o,n,f,nm,d) for o,n,f,nm,d in analyzer.trap_calls if n == 14]
+    gemdos = [(o,n,f,nm,d) for o,n,f,nm,d in analyzer.trap_calls if n == 1 and f >= 0]
+    bios = [(o,n,f,nm,d) for o,n,f,nm,d in analyzer.trap_calls if n == 13 and f >= 0]
+    xbios = [(o,n,f,nm,d) for o,n,f,nm,d in analyzer.trap_calls if n == 14 and f >= 0]
     gem = [(o,n,f,nm,d) for o,n,f,nm,d in analyzer.trap_calls if n == 2]
 
     if gemdos:
