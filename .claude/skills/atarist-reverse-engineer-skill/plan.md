@@ -256,7 +256,12 @@ Format:
 ; -------------------------------------------------------""",
 ```
 
-### 4.3 Add INLINE_COMMENTS for non-trivial instructions
+### 4.3 Add INLINE_COMMENTS for EVERY non-trivial instruction
+
+**CRITICAL**: This is the most labor-intensive step. You MUST comment ≥60% of all instruction lines. Do NOT add a few comments and move on — systematically process every section of the binary, adding comments for every instruction that isn't completely self-evident (e.g., `rts` is obvious, but `cmpi.b #$2B, d0` needs "Is it '+' operator?").
+
+**How to achieve 60% density**: Process the binary section by section. For each section, read 50-100 lines of SOURCE.txt, generate comments for every instruction in that block, add them to annotations.py, then move to the next block. Use parallel Explore agents to generate comments for multiple sections simultaneously — each agent reads a section of SOURCE.txt and outputs a Python dict of `{offset: "comment"}` entries.
+
 Prioritize:
 - All TRAP/system calls (even if auto-annotated, add the parameter context)
 - Branch conditions ("If digit >= radix → invalid")
@@ -264,6 +269,9 @@ Prioritize:
 - 68000 idioms ("SWAP for 32-bit multiply — MULU is 16×16 only")
 - Loop boundaries ("--- begin: scan digits ---")
 - Stack frame operations ("Save D2-D7/A2-A6 per calling convention")
+- EVERY CMPI/CMP comparison: explain what is being tested
+- EVERY BSR/JSR: name the target subroutine
+- EVERY branch: explain what the condition means in context
 
 ### 4.4 Add KNOWN_SUBS entries
 Edit `disasm_atari.py` (or the copy in `tools/`) to add the `KNOWN_SUBS` dict entries for all identified subroutines.
