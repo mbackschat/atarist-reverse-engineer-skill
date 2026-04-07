@@ -1,2 +1,4 @@
 # Prevent any line ending or encoding conversions for reference files
 .claude/skills/atarist-reverse-engineer-skill/reference/** binary
+# But treat .md files as text so git shows proper diffs
+.claude/skills/atarist-reverse-engineer-skill/reference/*.md -binary text diff merge
