@@ -1087,6 +1087,37 @@ class ListingGenerator:
                         in_data = True
                         break
                 if in_data:
+                    # After a data region, align to even address (68000 requires
+                    # word-aligned code) and skip orphan bytes up to the next
+                    # known code target.
+                    if offset & 1:
+                        # Check if this odd byte falls in another data region
+                        in_next_data = any(ds <= offset < de for ds, de in a.data_regions)
+                        if not in_next_data:
+                            f.write(f"  {offset:05X}: {code[offset]:02X}                  dc.b    ${code[offset]:02X}\n")
+                            offset += 1
+                    # If we're at an even address and not in a data region,
+                    # check for orphan bytes before the next known code entry
+                    if not (offset & 1):
+                        in_next_data = any(ds <= offset < de for ds, de in a.data_regions)
+                        if not in_next_data:
+                            all_targets = a.bsr_targets | a.jsr_targets | a.branch_targets
+                            if offset not in all_targets and offset not in self.subroutines and offset not in self.labels:
+                                next_target = None
+                                for t in sorted(all_targets | set(self.subroutines.keys()) | set(self.labels.keys())):
+                                    if t >= offset:
+                                        next_target = t
+                                        break
+                                if next_target is not None and next_target - offset <= 32:
+                                    # Emit gap as raw data bytes
+                                    while offset < next_target and offset <= last_nonzero:
+                                        if offset + 1 < len(code) and (next_target - offset) >= 2:
+                                            w = self.binary.word_at(offset)
+                                            f.write(f"  {offset:05X}: {code[offset]:02X} {code[offset+1]:02X}               dc.w    ${w:04X}\n")
+                                            offset += 2
+                                        else:
+                                            f.write(f"  {offset:05X}: {code[offset]:02X}                  dc.b    ${code[offset]:02X}\n")
+                                            offset += 1
                     continue
 
                 # Write subroutine/label headers
