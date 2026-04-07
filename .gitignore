@@ -1,2 +1,8 @@
 __pycache__/
 .claude/settings.local.json
+bin/
+tools/
+SOURCE.txt
+ANALYSIS.md
+MANUAL.md
+CONTEXT.md

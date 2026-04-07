@@ -6,6 +6,8 @@ A Claude Code skill that guides the reverse-engineering of Atari ST (Motorola 68
 - **`ANALYSIS.md`** — Technical analysis document
 - **`MANUAL.md`** — User manual (adapted to program type)
 
+Additionally produces a **`CONTEXT.md`** that captures all accumulated knowledge for future sessions.
+
 The methodology, prompts, Python tooling, and reference material are generalized to work with any Atari ST binary — not just development tools, but also games, demos, GEM applications, TSRs, and utilities.
 
 ---
@@ -80,7 +82,7 @@ Binary File (.PRG / .TOS / .ACC / raw)
     │
     ├─ Phase 6: Review ──────── Cross-check all deliverables against raw binary
     │                            with parallel reviewer agents; verify annotation
-    │                            coverage (target ≥50% of instructions commented)
+    │                            coverage (target ≥60% of instructions commented)
     │
     └─ Phase 7: Pseudocode ─── Write pseudocode for key algorithms and main logic,
                                  insert into ANALYSIS.md subsystem sections
@@ -96,7 +98,8 @@ your-project/
 │   └── skills/
 │       └── atarist-reverse-engineer-skill/
 │           ├── SKILL.md                           Skill definition (YAML frontmatter + instructions)
-│           ├── plan.md                            Step-by-step RE playbook (6 phases, 10 tips)
+│           ├── README.md                          Skill-internal documentation and changelog
+│           ├── plan.md                            Step-by-step RE playbook (7 phases, 10 tips)
 │           │
 │           ├── prompts/
 │           │   ├── analysis-sections.md           14 template prompts for code section analysis
@@ -107,17 +110,19 @@ your-project/
 │           │
 │           ├── scripts/
 │           │   ├── disasm_atari.py                68000 disassembler & analyzer (Capstone-based)
+│           │   ├── build_annotations.py           Fragment merger + density stats reporter
 │           │   ├── annotations_template.py        Starter annotation file with format examples
 │           │   └── requirements.txt               Python dependency: capstone>=5.0.7
 │           │
 │           └── reference/
-│               ├── tos-quick-ref.md               Condensed TOS reference (327 lines)
+│               ├── tos-quick-ref.md               Condensed TOS reference (all calls, vectors, memory map)
+│               ├── gem-quick-ref.md               GEM AES/VDI parameter reference
 │               ├── TOS.TXT                        Complete TOS system call reference
 │               ├── GEMDOS.TXT                     Full GEMDOS reference
 │               ├── BIOS.TXT                       BIOS quick reference
 │               ├── BIOS_Calls _Trap_13.TXT        BIOS Trap #13 detailed reference
 │               ├── XBIOS.TXT                      XBIOS reference
-│               ├── AES.md                         AES reference
+│               ├── AES.md                         Full AES reference with parameter tables
 │               ├── AES_CALL.TXT                   AES function calls (detailed)
 │               ├── GDOS_INF.TXT                   GDOS reference
 │               ├── SALAD.TXT                      System Assembly Language documentation
@@ -184,7 +189,17 @@ These automatically annotate every system call in the disassembly.
 
 ## The Annotation System
 
-Annotations live in a separate `annotations.py` file that the disassembler imports at runtime, keeping analysis knowledge separate from the tool. See `scripts/annotations_template.py` for the format and `prompts/annotation-guide.md` for the style guide.
+Annotations are built through a **fragment file pipeline**:
+
+1. **Parallel analysis agents** each write a fragment file (`annot_frag_SECTION.py`) containing five Python dicts: `BLOCK_COMMENTS`, `INLINE_COMMENTS`, `KNOWN_SUBS`, `SECTIONS`, `DATA_REGIONS`
+2. **`build_annotations.py`** merges all fragments with an auto-generated scaffold (from `analysis.json`) into a single `annotations.py`
+3. **`disasm_atari.py`** imports `annotations.py` at regeneration time to produce the final annotated listing
+
+The scaffold provides skeleton block comments for every detected subroutine and inline comments for all auto-detected system calls. Fragment entries override scaffold entries at the same offset. Run `build_annotations.py --stats` to check annotation density (target: 60%+ of instruction lines commented).
+
+SECTIONS entries accept both `(offset, name)` and `(start, end, name)` tuple formats.
+
+See `scripts/annotations_template.py` for the format and `prompts/annotation-guide.md` for the style guide.
 
 ---
 
