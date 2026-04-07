@@ -172,10 +172,23 @@ Create a table of offset ranges and their purposes. Start rough, refine as analy
 
 ---
 
-## Phase 3: Deep Code Analysis
+## Phase 3: Deep Code Analysis and Annotation
 
-### 3.1 Launch parallel analysis agents
-For each identified section, launch an Explore agent with a focused prompt. Use the templates in `${CLAUDE_SKILL_DIR}/prompts/analysis-sections.md`.
+### 3.1 Launch parallel annotation agents
+For each identified section, launch a **general-purpose agent** (NOT Explore — agents must be able to write files). Use the templates in `${CLAUDE_SKILL_DIR}/prompts/analysis-sections.md`.
+
+Each agent MUST:
+1. Read its assigned section of SOURCE.txt (by line range)
+2. Read `analysis.json` for subroutine names, TRAP calls, and string refs in its range
+3. **Write a fragment file**: `tools/annot_frag_SECTIONNAME.py` containing `BLOCK_COMMENTS`, `INLINE_COMMENTS`, `KNOWN_SUBS`, `SECTIONS`, and `DATA_REGIONS` dicts
+4. Return a markdown summary of findings for ANALYSIS.md
+
+**Guidelines:**
+- Limit to 4-6 parallel agents
+- Each agent handles 500-1000 instructions (not more — quality over quantity)
+- Agents should aim for ≥60% inline comment density within their section
+- Every subroutine MUST have both a BLOCK_COMMENTS entry and a KNOWN_SUBS entry
+- See `${CLAUDE_SKILL_DIR}/prompts/analysis-sections.md` for the fragment file format
 
 **Priority order depends on program type:**
 
@@ -194,16 +207,7 @@ For each identified section, launch an Explore agent with a focused prompt. Use 
 **Batch tool:**
 1. Entry + argument parsing → 2. Main processing loop → 3. File I/O → 4. Output formatting
 
-### 3.3 Collect base-register offsets
-As you analyze each section, maintain a running list of EVERY base-register-relative offset accessed in the code. For each, note:
-- The offset value (e.g., $663C(A5) or $0A6C(A3))
-- The size (byte/word/long — inferred from instruction size suffix)
-- What it appears to store (inferred from context: how it's read, written, compared)
-- Which routines read/write it
-
-This list becomes the **Global Variable Map** and **State Structure Maps** in ANALYSIS.md. These are among the most valuable analysis artifacts.
-
-### 3.2 For each section, determine:
+### 3.2 What each agent must determine for its section
 - **Purpose**: What does this section do?
 - **Entry points**: Which subroutines are called from outside?
 - **Register conventions**: What's in each register on entry/exit?
@@ -211,87 +215,45 @@ This list becomes the **Global Variable Map** and **State Structure Maps** in AN
 - **Algorithms**: What logic/math does it implement?
 - **System calls**: What TOS services does it use?
 - **68000 tricks**: What coding idioms are employed?
+- **Base-register offsets**: Every `$XXXX(A5)` or `$XXXX(A3)` access with size and purpose — these become the Global Variable Map and State Structure Maps in ANALYSIS.md
+- **Call site documentation**: For every BSR/JSR, what parameters are passed in which registers
 
-### 3.3 Reconstruct subroutine signatures
-For every identified subroutine, document:
-```
-name: descriptive_name
-offset: $XXXX
-purpose: One-line description
-entry:
-  A0: pointer to input buffer
-  D0.B: first character
-  D2: radix (10=decimal, 16=hex)
-exit:
-  D1.L: parsed value
-  D0.B: next character after parsed value
-  carry flag: set on error
-trashes: D3, D4
-```
-
-### 3.4 Document call sites
-When analyzing code that calls subroutines, annotate the call with what parameters are being passed:
-```
-; Set up: A0 = filename string, D0.W = open mode (0=read)
-  bsr.w  file_open    ; file_open(A0:*filename, D0:mode) → D1:handle
-```
+All of this analysis is captured in the fragment file (as BLOCK_COMMENTS and INLINE_COMMENTS entries) and in the markdown summary returned to the main conversation.
 
 ---
 
-## Phase 4: Build Annotations
+## Phase 4: Build Annotations and Regenerate
 
-### 4.1 Create annotations.py
-Copy `${CLAUDE_SKILL_DIR}/scripts/annotations_template.py` to `tools/annotations.py`. Populate it with findings from Phase 3.
-
-### 4.2 Add BLOCK_COMMENTS for every subroutine
-Format:
-```python
-0x01234: """; -------------------------------------------------------
-; routine_name - Brief description
-; Longer explanation of algorithm/purpose.
-;
-; Entry: A0 = input, D0 = character
-; Exit:  D1 = result
-; Trashes: D2, D3
-; -------------------------------------------------------""",
+### 4.1 Build annotations.py
+Run the build script to merge the scaffold (from analysis.json) with all agent fragment files:
+```bash
+cd tools && uv run python build_annotations.py --stats
 ```
 
-### 4.3 Add INLINE_COMMENTS for EVERY non-trivial instruction
+`build_annotations.py` (from `${CLAUDE_SKILL_DIR}/scripts/`) does:
+1. Reads `analysis.json` → generates scaffold entries (block comment skeletons for every subroutine, inline comments for all auto-detected TRAP/Line-A/string-ref calls)
+2. Reads all `annot_frag_*.py` fragment files — catches and reports syntax errors per fragment
+3. Merges: fragment entries override scaffold entries for the same offset
+4. Writes final `annotations.py` with all five dicts: BLOCK_COMMENTS, INLINE_COMMENTS, KNOWN_SUBS, SECTIONS, DATA_REGIONS
+5. Prints density statistics
 
-**CRITICAL**: This is the most labor-intensive step. You MUST comment ≥60% of all instruction lines. Do NOT add a few comments and move on — systematically process every section of the binary, adding comments for every instruction that isn't completely self-evident (e.g., `rts` is obvious, but `cmpi.b #$2B, d0` needs "Is it '+' operator?").
+### 4.2 Check density and fill gaps
+Review the `--stats` output. If overall inline comment density is below 60%, or specific sections are sparse:
+- Identify which offset ranges have gaps
+- Launch targeted general-purpose agents for those ranges only
+- Each gap-filling agent writes an additional `annot_frag_gap_RANGE.py` fragment
+- Re-run `build_annotations.py` to merge the new fragments
 
-**How to achieve 60% density**: Process the binary section by section. For each section, read 50-100 lines of SOURCE.txt, generate comments for every instruction in that block, add them to annotations.py, then move to the next block. Use parallel Explore agents to generate comments for multiple sections simultaneously — each agent reads a section of SOURCE.txt and outputs a Python dict of `{offset: "comment"}` entries.
-
-Prioritize:
-- All TRAP/system calls (even if auto-annotated, add the parameter context)
-- Branch conditions ("If digit >= radix → invalid")
-- Magic numbers ("$61 = 'a', start of lowercase range")
-- 68000 idioms ("SWAP for 32-bit multiply — MULU is 16×16 only")
-- Loop boundaries ("--- begin: scan digits ---")
-- Stack frame operations ("Save D2-D7/A2-A6 per calling convention")
-- EVERY CMPI/CMP comparison: explain what is being tested
-- EVERY BSR/JSR: name the target subroutine
-- EVERY branch: explain what the condition means in context
-
-### 4.4 Add KNOWN_SUBS entries
-Edit `disasm_atari.py` (or the copy in `tools/`) to add the `KNOWN_SUBS` dict entries for all identified subroutines.
-
-### 4.5 Add SECTIONS entries
-Add section boundary definitions with multi-line descriptions.
-
-### 4.6 Add DATA_REGIONS entries
-In annotations.py, add DATA_REGIONS entries for any known data areas (font bitmaps, string tables, sprite data, lookup tables). The disassembler also auto-detects some data regions, but manual overrides are more precise.
-
-### 4.7 Regenerate
+### 4.3 Regenerate
 ```bash
 cd tools && uv run python disasm_atari.py ../TARGET --prefix NAME
 ```
-Verify the output, iterate.
+Verify the output has annotations throughout. Compare first 500 vs last 500 lines — density should be comparable.
 
-### 4.8 Annotation coverage targets
+### 4.4 Annotation coverage targets
 Aim for these minimum levels:
 - **Inline comments**: ≥60% of instruction lines should have a comment. Every CMPI/branch pair, every TRAP call, every structure field access, every magic number must be explained.
-- **CRITICAL — Uniform density**: Comment density MUST NOT drop off as the binary progresses. The last 500 lines of SOURCE.txt must be annotated to the same standard as the first 500 lines. Process the binary in sections and annotate each section fully before moving on.
+- **CRITICAL — Uniform density**: Comment density MUST NOT drop off as the binary progresses. The last 500 lines of SOURCE.txt must be annotated to the same standard as the first 500 lines. The fragment-per-section approach ensures each section is annotated independently.
 - **Block comments**: Every subroutine must have a block comment with purpose, entry/exit registers, and algorithm description. Be detailed — explain the algorithm's logic, data structures, and inner workings. Don't just name it.
 - **No unexplained magic numbers**: Every hex literal that isn't self-evident (ASCII codes, structure offsets, hardware addresses, flag bits, scancodes) must be decoded in an inline comment.
 - **Explain for non-experts**: Where a code pattern depends on Atari ST or 68000-specific knowledge, add a multi-line explanation. Don't just say "Kbshift(-1)" — say "Read keyboard modifier state: bit 0=RShift, 1=LShift, 2=Ctrl, 3=Alt, 4=CapsLock".

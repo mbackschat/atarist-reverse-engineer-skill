@@ -1003,6 +1003,18 @@ class ListingGenerator:
         except (ImportError, AttributeError):
             pass
 
+        # Load custom section definitions from annotations
+        try:
+            from annotations import SECTIONS as custom_sections
+            if custom_sections:
+                self.SECTIONS = sorted(
+                    list(self.SECTIONS) + list(custom_sections),
+                    key=lambda x: x[0]
+                )
+                print(f"    Loaded {len(custom_sections)} custom sections from annotations")
+        except (ImportError, AttributeError):
+            pass
+
     def _name_locations(self):
         """Assign names to all known locations."""
         a = self.analyzer
@@ -1015,6 +1027,16 @@ class ListingGenerator:
         # Apply known subroutine names (from code analysis)
         for addr, name in self.KNOWN_SUBS.items():
             self.subroutines[addr] = name
+
+        # Apply custom subroutine names from annotations.py (override defaults)
+        try:
+            from annotations import KNOWN_SUBS as custom_subs
+            for addr, name in custom_subs.items():
+                self.subroutines[addr] = name
+            if custom_subs:
+                print(f"    Loaded {len(custom_subs)} custom subroutine names from annotations")
+        except (ImportError, AttributeError):
+            pass
 
         # Name remaining subroutines that contain TRAP calls
         sorted_subs = sorted(self.subroutines.keys())

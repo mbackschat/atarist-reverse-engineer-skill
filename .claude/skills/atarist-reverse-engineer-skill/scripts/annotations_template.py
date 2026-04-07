@@ -86,3 +86,35 @@ DATA_REGIONS = [
     # (0x09A00, 0x09D00, "UI string table and help screen text"),
 
 ]
+
+
+# ============================================================================
+# KNOWN SUBROUTINE NAMES — human-readable names for identified subroutines
+# ============================================================================
+
+KNOWN_SUBS = {
+
+    # Format: code_offset: "subroutine_name"
+    # These override the auto-generated sub_XXXXX names in the listing.
+    # Example:
+    # 0x00020: "skip_whitespace",
+    # 0x00086: "parse_hex_number",
+    # 0x00F00: "tos_wrapper",
+
+}
+
+
+# ============================================================================
+# SECTION DEFINITIONS — major code region boundaries
+# ============================================================================
+
+SECTIONS = [
+
+    # Format: (start_offset, "Section Name\nOptional description lines")
+    # These insert section header dividers in the listing.
+    # Example:
+    # (0x00000, "Entry Point and Initialization"),
+    # (0x00800, "Utility Routines\nShared helper functions for parsing, I/O, etc."),
+    # (0x02000, "Main Command Loop\nKeyboard polling and command dispatch"),
+
+]

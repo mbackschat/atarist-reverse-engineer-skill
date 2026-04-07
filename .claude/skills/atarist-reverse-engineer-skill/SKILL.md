@@ -75,20 +75,19 @@ Follow the detailed step-by-step procedure in [plan.md](${CLAUDE_SKILL_DIR}/plan
 3. Map strings to code regions via the LEA PC-relative cross-references
 4. Identify the major sections: initialization, main loop, subsystem boundaries
 
-### Phase 3: Deep Code Analysis (use parallel Explore agents)
-1. Launch agents to analyze each identified section in parallel
-2. For each section: read the disassembly, trace instruction logic, identify algorithms
-3. Document subroutine signatures: entry registers, exit values, side effects
-4. Follow the annotation guide in [prompts/annotation-guide.md](${CLAUDE_SKILL_DIR}/prompts/annotation-guide.md)
-5. Use the section analysis templates in [prompts/analysis-sections.md](${CLAUDE_SKILL_DIR}/prompts/analysis-sections.md)
+### Phase 3: Deep Code Analysis and Annotation (use parallel general-purpose agents)
+1. Copy `build_annotations.py` from `${CLAUDE_SKILL_DIR}/scripts/` into `tools/`
+2. Launch **general-purpose agents** (NOT Explore — they must write files) to analyze each section in parallel
+3. Each agent reads its section of SOURCE.txt + analysis.json, then **writes a fragment file** (`tools/annot_frag_SECTION.py`) with BLOCK_COMMENTS, INLINE_COMMENTS, KNOWN_SUBS, SECTIONS, and DATA_REGIONS dicts
+4. Each agent also returns a markdown summary for use in ANALYSIS.md
+5. Follow the annotation guide in [prompts/annotation-guide.md](${CLAUDE_SKILL_DIR}/prompts/annotation-guide.md)
+6. Use the section analysis templates in [prompts/analysis-sections.md](${CLAUDE_SKILL_DIR}/prompts/analysis-sections.md)
 
 ### Phase 4: Build Annotations and Regenerate
-1. Create `tools/annotations.py` with BLOCK_COMMENTS and INLINE_COMMENTS dicts
-2. Add block comments for every identified subroutine — be detailed: explain the algorithm, data structures, arguments, and return values
-3. Add inline comments for non-trivial instructions — **maintain ≥60% density from start to finish** (do NOT let density drop off after the first few hundred lines)
-4. Add DATA_REGIONS only for areas you are **certain** are data — falsely marking code as data is far worse than leaving data as code
-5. Add entries to KNOWN_SUBS and SECTIONS in the disassembler
-6. Regenerate: `cd tools && uv run python disasm_atari.py ../BINARY --prefix NAME`
+1. Run `cd tools && uv run python build_annotations.py --stats` to merge scaffold (from analysis.json) + all fragment files into `annotations.py`
+2. Review density stats — if below 60%, launch targeted agents for sparse sections and re-merge
+3. Regenerate: `cd tools && uv run python disasm_atari.py ../BINARY --prefix NAME`
+4. Verify annotations are uniform throughout (first 500 lines vs last 500 lines)
 
 ### Phase 5: Write Documentation
 1. Write `ANALYSIS.md` from the analysis findings

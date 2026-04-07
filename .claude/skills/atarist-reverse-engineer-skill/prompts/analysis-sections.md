@@ -1,13 +1,14 @@
 # Section Analysis Prompt Templates
 
-Use these templates when launching Explore agents to analyze specific code sections. Replace `{SOURCE}` with the path to the SOURCE.txt file and `{LINES}` with the line range.
+Use these templates when launching **general-purpose agents** to analyze specific code sections. Replace `{SOURCE}` with the path to the SOURCE.txt file, `{LINES}` with the line range, and `{SECTION}` with the section name (e.g., `entry`, `io_wrappers`, `main_loop`).
 
-**IMPORTANT — every agent MUST also output:**
-1. All base-register offsets accessed (e.g., "$663C(A5) = long, current address") — for the Global Variable Map
-2. All structure field accesses (e.g., "$0A6C(A3) = word, insert mode flag") — for State Structure Maps
-3. All scancodes, command codes, or dispatch values with handler addresses — for dispatch tables
-4. All magic numbers decoded (ASCII codes, flag bits, hardware registers, TOS constants)
-5. Step-by-step algorithm description for any non-trivial logic (not just "this routine parses input")
+**IMPORTANT — every agent MUST:**
+1. Collect all base-register offsets accessed (e.g., "$663C(A5) = long, current address") — for the Global Variable Map
+2. Collect all structure field accesses (e.g., "$0A6C(A3) = word, insert mode flag") — for State Structure Maps
+3. Collect all scancodes, command codes, or dispatch values with handler addresses — for dispatch tables
+4. Decode all magic numbers (ASCII codes, flag bits, hardware registers, TOS constants)
+5. Write step-by-step algorithm descriptions for any non-trivial logic (not just "this routine parses input")
+6. **Write ALL annotation findings to a Python fragment file** at `tools/annot_frag_{SECTION}.py` — see output format below
 
 **Explain for non-experts**: Where a code pattern depends on Atari ST or 68000-specific knowledge, include a brief explanation. Common things to explain:
 - Basepage fields: +$08=text_start, +$0C=text_size, +$10=data_start, +$14=data_size, +$18=bss_start, +$1C=bss_size
@@ -19,13 +20,57 @@ Use these templates when launching Explore agents to analyze specific code secti
 
 ---
 
+## Output Format: Annotation Fragment File
+
+Every agent MUST write its findings to `tools/annot_frag_{SECTION}.py` containing Python dicts. Use only the dicts that have entries:
+
+```python
+# Fragment: {SECTION} (offsets $XXXX-$YYYY)
+
+BLOCK_COMMENTS = {
+    0x01234: """; -------------------------------------------------------
+; routine_name - Brief description
+; Algorithm explanation...
+;
+; Entry: A0 = input, D0 = character
+; Exit:  D1 = result
+; Trashes: D2, D3
+; -------------------------------------------------------""",
+}
+
+INLINE_COMMENTS = {
+    0x01234: "comment text here",
+    0x01238: "Convert lowercase to uppercase (ASCII distance = $20)",
+}
+
+KNOWN_SUBS = {
+    0x01234: "routine_name",
+}
+
+SECTIONS = [
+    (0x01234, "Section Name\nDescription line"),
+]
+
+DATA_REGIONS = [
+    (0x05000, 0x05800, "Font bitmap data"),
+]
+```
+
+**Rules:**
+- All keys are **code offsets** (hex integers like `0x01234`)
+- Aim for **>=60% inline comment density** within your section
+- Every subroutine MUST have both a BLOCK_COMMENTS entry and a KNOWN_SUBS entry
+- After writing the fragment file, return a **markdown summary** of your analysis findings (architecture, algorithms, data structures, variable map entries) for use in ANALYSIS.md
+
+---
+
 ## Template: Entry Point and Utility Routines
 
 ```
 Read {SOURCE} lines {LINES} (Entry Point and Utility Routines section).
 
-For EVERY instruction, tell me what it does in context. Format as:
-offset | comment
+For EVERY instruction, determine what it does in context.
+Write all annotation entries to the fragment file (see Output Format above).
 
 Key things to determine:
 - How is the base register established? (LEA (PC),An pattern)
@@ -45,8 +90,8 @@ For each subroutine, reconstruct:
 ```
 Read {SOURCE} lines {LINES} (System I/O Wrappers section).
 
-For EVERY instruction, tell me what it does in context. Format as:
-offset | comment
+For EVERY instruction, determine what it does in context.
+Write all annotation entries to the fragment file (see Output Format above).
 
 Key things to determine:
 - How does character output work? (direct screen write vs BIOS Bconout)
@@ -64,8 +109,8 @@ Explain all 68000 tricks: ROL for nibble rotation, PEA packed params, MOVEM for 
 ```
 Read {SOURCE} lines {LINES} (CPU Exception Handlers section).
 
-For EVERY instruction, tell me what it does in context. Format as:
-offset | comment
+For EVERY instruction, determine what it does in context.
+Write all annotation entries to the fragment file (see Output Format above).
 
 Key things to determine:
 - What exception types are handled? (Bus Error, Address Error, Illegal, Div0, CHK, TRAPV, Privilege)
@@ -81,8 +126,8 @@ Key things to determine:
 ```
 Read {SOURCE} lines {LINES} (Main Initialization and Command Dispatch section).
 
-For EVERY instruction, tell me what it does in context. Format as:
-offset | comment
+For EVERY instruction, determine what it does in context.
+Write all annotation entries to the fragment file (see Output Format above).
 
 Key things to determine:
 - What is the startup sequence? (basepage save, vector install, table init, screen setup)
@@ -100,8 +145,8 @@ For exception vector installation: document which vector (address $XX) gets whic
 ```
 Read {SOURCE} lines {LINES} (Keyboard I/O and Input Processing section).
 
-For EVERY instruction, tell me what it does in context. Format as:
-offset | comment
+For EVERY instruction, determine what it does in context.
+Write all annotation entries to the fragment file (see Output Format above).
 
 Key things to determine:
 - How does the keyboard polling loop work? (Kbshift + Bconstat + Bconin)
@@ -119,8 +164,8 @@ Document the full dispatch table: scancode → handler address → function.
 ```
 Read {SOURCE} lines {LINES} (Assembler/Compiler section).
 
-For EVERY instruction, tell me what it does in context. Format as:
-offset | comment
+For EVERY instruction, determine what it does in context.
+Write all annotation entries to the fragment file (see Output Format above).
 
 Key things to determine:
 - How many passes? What does each pass do?
@@ -139,8 +184,8 @@ Key things to determine:
 ```
 Read {SOURCE} lines {LINES} (Screen Rendering / Display section).
 
-For EVERY instruction, tell me what it does in context. Format as:
-offset | comment
+For EVERY instruction, determine what it does in context.
+Write all annotation entries to the fragment file (see Output Format above).
 
 Key things to determine:
 - How is the video mode detected? (hardware register reads)
@@ -157,8 +202,8 @@ Key things to determine:
 ```
 Read {SOURCE} lines {LINES} (File I/O and Directory section).
 
-For EVERY instruction, tell me what it does in context. Format as:
-offset | comment
+For EVERY instruction, determine what it does in context.
+Write all annotation entries to the fragment file (see Output Format above).
 
 Key things to determine:
 - How does file save work? (GEMDOS Fcreate → Fwrite loop → Fclose)
@@ -175,8 +220,8 @@ Key things to determine:
 ```
 Read {SOURCE} lines {LINES} (Debugger/Monitor section).
 
-For EVERY instruction, tell me what it does in context. Format as:
-offset | comment
+For EVERY instruction, determine what it does in context.
+Write all annotation entries to the fragment file (see Output Format above).
 
 Key things to determine:
 - How does the register save/restore mechanism work?
@@ -211,6 +256,8 @@ For the identified pattern, determine:
   For each: the trigger value (key, event type, timer tick) AND the handler address
 
 List ALL base-register offsets accessed (for the global variable map).
+
+Write all annotation entries to the fragment file (see Output Format above).
 ```
 
 ## Template: Graphics and Animation
@@ -218,8 +265,8 @@ List ALL base-register offsets accessed (for the global variable map).
 ```
 Read {SOURCE} lines {LINES} (Graphics/Animation section).
 
-For EVERY instruction, tell me what it does in context. Format as:
-offset | comment
+For EVERY instruction, determine what it does in context.
+Write all annotation entries to the fragment file (see Output Format above).
 
 Key things to determine:
 - How does the program synchronize with vertical blank?
@@ -244,8 +291,8 @@ Explain the Atari ST bitplane layout for non-experts where relevant.
 ```
 Read {SOURCE} lines {LINES} (Sound/Music section).
 
-For EVERY instruction, tell me what it does in context. Format as:
-offset | comment
+For EVERY instruction, determine what it does in context.
+Write all annotation entries to the fragment file (see Output Format above).
 
 Key things to determine:
 - Which sound hardware is accessed?
@@ -263,8 +310,8 @@ Key things to determine:
 ```
 Read {SOURCE} lines {LINES} (GEM Application section).
 
-For EVERY instruction, tell me what it does in context. Format as:
-offset | comment
+For EVERY instruction, determine what it does in context.
+Write all annotation entries to the fragment file (see Output Format above).
 
 Key things to determine:
 - AES initialization: appl_init return value, global[] array contents
@@ -283,8 +330,8 @@ Key things to determine:
 ```
 Read {SOURCE} lines {LINES} (Interrupt Handler / TSR section).
 
-For EVERY instruction, tell me what it does in context. Format as:
-offset | comment
+For EVERY instruction, determine what it does in context.
+Write all annotation entries to the fragment file (see Output Format above).
 
 Key things to determine:
 - What vectors are installed? Map EACH vector address to its exception type:
